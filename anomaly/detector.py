@@ -1,68 +1,31 @@
 import dask.dataframe as dd
 
+
 def detect_anomaly(log_df, z_threshold=3):
-    # Filter ERROR logs
+    log_df["timestamp"] = dd.to_datetime(log_df["timestamp"])
+
     error_logs = log_df[log_df["level"] == "ERROR"]
 
-    # IMPORTANT: set index with sorted=True
-    error_logs = error_logs.set_index(
-        "timestamp",
-        sorted=False,          # allow Dask to sort
-        drop=False
-    )
+    if error_logs.shape[0].compute() == 0:
+        return error_logs.head(0)
 
-    # Resample safely
+    error_logs["minute"] = error_logs["timestamp"].dt.floor("min")
+
     error_counts = (
         error_logs
-        .resample("1T")
+        .groupby("minute")
         .size()
         .rename("error_count")
         .reset_index()
     )
 
-    # Compute statistics
     mean = error_counts["error_count"].mean().compute()
     std = error_counts["error_count"].std().compute()
 
     if std == 0:
-        return error_counts.head(0)
+        return error_counts.head(0).compute()
 
-    error_counts["z_score"] = (error_counts["error_count"] - mean) / std
-    error_counts["is_anomaly"] = error_counts["z_score"].abs() > z_threshold
+    error_counts["anomaly_score"] = (error_counts["error_count"] - mean) / std
+    error_counts["is_anomaly"] = error_counts["anomaly_score"].abs() > z_threshold
 
-    return error_counts[error_counts["is_anomaly"]]
-
-# import pandas as pd
-
-
-# def detect_anomaly(log_df, threshold=2):
-#     """
-#     Detect anomalies based on error count per minute
-#     """
-
-#     # 1️⃣ Convert to Pandas (safe for small data)
-#     pdf = log_df.compute()
-
-#     # 2️⃣ Ensure timestamp is datetime
-#     pdf["timestamp"] = pd.to_datetime(pdf["timestamp"])
-
-#     # 3️⃣ Filter ERROR logs
-#     error_logs = pdf[pdf["level"] == "ERROR"]
-
-#     if error_logs.empty:
-#         return error_logs.head(0)
-
-#     # 4️⃣ Count errors per minute
-#     error_counts = (
-#         error_logs
-#         .set_index("timestamp")
-#         .resample("1T")
-#         .size()
-#         .rename("error_count")
-#         .reset_index()
-#     )
-
-#     # 5️⃣ Apply threshold
-#     anomalies = error_counts[error_counts["error_count"] >= threshold]
-
-#     return anomalies
+    return error_counts[error_counts["is_anomaly"]].compute()
